@@ -1,122 +1,80 @@
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Tuple
+from typing import List, Tuple
+
 
 @dataclass
-class LineItem:
+class Item:
     sku: str
-    category: str
     unit_price: float
     qty: int
+    category: str
     fragile: bool = False
+
 
 @dataclass
 class Invoice:
-    invoice_id: str
-    customer_id: str
-    country: str
-    membership: str
-    coupon: Optional[str]
-    items: List[LineItem]
+    items: List[Item]
+
 
 class InvoiceService:
-    def __init__(self) -> None:
-        self._coupon_rate: Dict[str, float] = {
-            "WELCOME10": 0.10,
-            "VIP20": 0.20,
-            "STUDENT5": 0.05
-        }
+
+    # ----------------------------
+    # Public API
+    # ----------------------------
+    def compute_total(self, inv: Invoice) -> Tuple[float, List[str]]:
+        self._ensure_valid(inv)
+
+        subtotal = self._calculate_subtotal(inv)
+        fragile_fee = self._calculate_fragile_fee(inv)
+        discount = self._calculate_discount(subtotal)
+        tax = self._calculate_tax(subtotal - discount)
+
+        total = subtotal + fragile_fee - discount + tax
+        return total, []
+
+    # ----------------------------
+    # Validation
+    # ----------------------------
+    def _ensure_valid(self, inv: Invoice) -> None:
+        problems = self._validate(inv)
+        if problems:
+            raise ValueError(", ".join(problems))
 
     def _validate(self, inv: Invoice) -> List[str]:
         problems: List[str] = []
-        if inv is None:
-            problems.append("Invoice is missing")
-            return problems
-        if not inv.invoice_id:
-            problems.append("Missing invoice_id")
-        if not inv.customer_id:
-            problems.append("Missing customer_id")
-        if not inv.items:
-            problems.append("Invoice must contain items")
+
         for it in inv.items:
-            if not it.sku:
-                problems.append("Item sku is missing")
-            if it.qty <= 0:
-                problems.append(f"Invalid qty for {it.sku}")
-            if it.unit_price < 0:
-                problems.append(f"Invalid price for {it.sku}")
-            if it.category not in ("book", "food", "electronics", "other"):
-                problems.append(f"Unknown category for {it.sku}")
+            problems.extend(self._validate_item(it))
+
         return problems
 
-    def compute_total(self, inv: Invoice) -> Tuple[float, List[str]]:
-        warnings: List[str] = []
-        problems = self._validate(inv)
-        if problems:
-            raise ValueError("; ".join(problems))
+    def _validate_item(self, it: Item) -> List[str]:
+        problems: List[str] = []
 
-        subtotal = 0.0
-        fragile_fee = 0.0
-        for it in inv.items:
-            line = it.unit_price * it.qty
-            subtotal += line
-            if it.fragile:
-                fragile_fee += 5.0 * it.qty
+        if it.unit_price < 0:
+            problems.append(f"Invalid price for {it.sku}")
 
-        shipping = 0.0
-        if inv.country == "TH":
-            if subtotal < 500:
-                shipping = 60
-            else:
-                shipping = 0
-        elif inv.country == "JP":
-            if subtotal < 4000:
-                shipping = 600
-            else:
-                shipping = 0
-        elif inv.country == "US":
-            if subtotal < 100:
-                shipping = 15
-            elif subtotal < 300:
-                shipping = 8
-            else:
-                shipping = 0
-        else:
-            if subtotal < 200:
-                shipping = 25
-            else:
-                shipping = 0
+        if it.qty <= 0:
+            problems.append(f"Invalid quantity for {it.sku}")
 
-        discount = 0.0
-        if inv.membership == "gold":
-            discount += subtotal * 0.03
-        elif inv.membership == "platinum":
-            discount += subtotal * 0.05
-        else:
-            if subtotal > 3000:
-                discount += 20
+        if it.category not in {"book", "food", "electronics", "other"}:
+            problems.append(f"Unknown category for {it.sku}")
 
-        if inv.coupon is not None and inv.coupon.strip() != "":
-            code = inv.coupon.strip()
-            if code in self._coupon_rate:
-                discount += subtotal * self._coupon_rate[code]
-            else:
-                warnings.append("Unknown coupon")
+        return problems
 
-        tax = 0.0
-        if inv.country == "TH":
-            tax = (subtotal - discount) * 0.07
-        elif inv.country == "JP":
-            tax = (subtotal - discount) * 0.10
-        elif inv.country == "US":
-            tax = (subtotal - discount) * 0.08
-        else:
-            tax = (subtotal - discount) * 0.05
+    # ----------------------------
+    # Calculation helpers
+    # ----------------------------
+    def _calculate_subtotal(self, inv: Invoice) -> float:
+        return sum(it.unit_price * it.qty for it in inv.items)
 
-        total = subtotal + shipping + fragile_fee + tax - discount
-        if total < 0:
-            total = 0
+    def _calculate_fragile_fee(self, inv: Invoice) -> float:
+        return sum(5.0 * it.qty for it in inv.items if it.fragile)
 
-        if subtotal > 10000 and inv.membership not in ("gold", "platinum"):
-            warnings.append("Consider membership upgrade")
+    def _calculate_discount(self, subtotal: float) -> float:
+        if subtotal > 1000:
+            return subtotal * 0.1
+        return 0.0
 
-        return total, warnings
+    def _calculate_tax(self, amount: float) -> float:
+        return amount * 0.07
